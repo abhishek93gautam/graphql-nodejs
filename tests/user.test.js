@@ -1,49 +1,12 @@
 import 'cross-fetch/polyfill'
-import ApolloBoost, { gql } from 'apollo-boost'
+import { gql } from 'apollo-boost'
 import prisma from '../src/prisma'
-import bcrypt from 'bcryptjs'
+import seedDatabase, { userOne } from './utils/seedDatabase'
+import getClient from './utils/getClient'
 
-const client = new ApolloBoost({
-    uri: 'http://localhost:4000'
-})
+const client = getClient()
 
-beforeEach(async () => {
-    await prisma.mutation.deleteManyPosts()
-    await prisma.mutation.deleteManyUsers()
-    const user = await prisma.mutation.createUser({
-        data: {
-            name: 'Dravita',
-            email: 'dravu@example.com',
-            password: bcrypt.hashSync('Red0981234')
-        }
-    })
-
-    await prisma.mutation.createPost({
-        data: {
-            title: 'My published post',
-            body: '',
-            published: true,
-            author: {
-                connect: {
-                    id: user.id
-                }
-            }
-        }
-    })
-
-    await prisma.mutation.createPost({
-        data: {
-            title: 'My draft post',
-            body: '',
-            published: false,
-            author: {
-                connect: {
-                    id: user.id
-                }
-            }
-        }
-    })
-}, 20000)
+beforeEach(seedDatabase, 20000)
 
 test('should create a new user', async () => {
     const createUser = gql`
@@ -89,18 +52,54 @@ test('Should expose public author profiles', async () => {
     expect(res.data.users[0].name).toBe('Dravita')
 })
 
-test('Should expose only published posts', async () => {
-    const getPosts = gql`
-        query {
-            posts {
-                id
-                published
+test('Should not login with bad credentials', async () => {
+    const login = gql`
+        mutation {
+            login(
+                data: {
+                    email: "test@example.com",
+                    password: "abcadadad"
+                }
+            ) {
+                token
+            }
+        }
+    `  
+    await expect(client.mutate({ mutation: login })).rejects.toThrow()
+})
+
+test('Should not signup user with invalid password', async () => {
+    const createUser = gql`
+        mutation {
+            createUser(
+                data: {
+                    name: "Abhishek",
+                    email: "abhi@eample.com"
+                    password: "pass"
+                }
+            ) {
+                token
             }
         }
     `
 
-    const res = await client.query({ query: getPosts })
-
-    expect(res.data.posts.length).toBe(1)
-    expect(res.data.posts[0].published).toBe(true)
+    await expect(client.mutate({ mutation: createUser })).rejects.toThrow()
 })
+
+test('Should fetch user profile', async () => {
+    const client = getClient(userOne.jwt)
+
+    const getProfile = gql`
+        query {
+            me {
+                id
+                name
+                email
+            }
+        }
+    `
+    const { data } =  await client.query({query: getProfile})
+    expect(data.me.id).toBe(userOne.user.id)
+    expect(data.me.name).toBe(userOne.user.name)
+    expect(data.me.email).toBe(userOne.user.email)
+}) 
